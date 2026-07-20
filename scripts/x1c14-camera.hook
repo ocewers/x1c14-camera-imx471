@@ -1,0 +1,17 @@
+# Install as /etc/pacman.d/hooks/x1c14-camera.hook
+# ADJUST the Exec path below to where you checked out this repository.
+# Re-runs the camera restore automatically when the kernel or libcamera updates.
+[Trigger]
+Operation = Install
+Operation = Upgrade
+Type = Package
+Target = linux-ptl
+Target = linux-ptl-headers
+Target = linux
+Target = linux-headers
+Target = libcamera
+
+[Action]
+Description = Restoring X1C14 camera (imx471 modules + tuning file)...
+When = PostTransaction
+Exec = /bin/bash /path/to/x1c14-camera-imx471/scripts/fix-camera.sh

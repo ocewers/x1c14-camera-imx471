@@ -1,0 +1,16 @@
+--- a/imx471.c	2026-07-20 21:59:08.912147699 +0200
++++ imx471.c	2026-07-20 16:32:50.466631275 +0200
+@@ -117,7 +117,12 @@
+ #define to_imx471(_sd) container_of_const(_sd, struct imx471, sd)
+ 
+ static const char * const imx471_supply_name[] = {
+-	"vana",
++	/*
++	 * Upstream uses "vana" + an int3472 con_id remap (v6 patch 3/4).
++	 * We run the stock int3472 which registers the rail as "avdd",
++	 * so request that name directly instead.
++	 */
++	"avdd",
+ };
+ 
+ struct imx471_mode {

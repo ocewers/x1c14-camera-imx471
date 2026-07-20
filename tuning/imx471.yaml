@@ -1,0 +1,23 @@
+%YAML 1.1
+# SPDX-License-Identifier: CC0-1.0
+# Sony IMX471 (ThinkPad X1 Carbon Gen 14, TBE20A0) — hand-calibrated 2026-07-20
+# against iPhone 16 Pro reference (wall patch neutralized: linear gains R=1.21 B=1.26).
+# Diagonal-only CCM on purpose: never lowers G => clipped highlights stay white (no magenta).
+---
+version: 1
+algorithms:
+  - BlackLevel:
+      r: 16
+      gr: 16
+      gb: 16
+      b: 16
+  - Awb:
+  - Ccm:
+      ccms:
+        - ct: 6500
+          ccm: [ 1.21, 0.00, 0.00,
+                 0.00, 1.00, 0.00,
+                 0.00, 0.00, 1.26 ]
+  - Adjust:
+  - Agc:
+...
