@@ -28,6 +28,26 @@ make it obsolete. The real fix consists of, in order:
 If you can contribute to any of those, that helps far more than polishing this
 workaround.
 
+## Tested environment — read before applying elsewhere
+
+All of this was built and verified on **one machine running
+[Omarchy](https://omarchy.org)** (Arch-based) with the `linux-ptl` 7.1.3 kernel.
+No guarantees on other distros, including other Arch derivatives. What carries
+over and what does not:
+
+- **Layer 1 (kernel modules)** is distro-agnostic: any distro whose kernel has
+  IPU7 support (`intel-ipu7`, mainline since 6.17) but lacks the IMX471 series
+  can build these sources against its own headers. Fedora users don't need it
+  at all (the series is backported there).
+- **Layer 2/3 overrides target Omarchy's `intel-ipu7-camera` package**
+  (udev hide-rules, the WirePlumber drop-in, the v4l2-relayd chain). On a
+  system without that package there is nothing to override — instead install
+  `v4l2loopback` + `v4l2-relayd` yourself if you need the V4L2 compatibility
+  layer, or skip layer 3 entirely if your applications can use PipeWire
+  cameras.
+- **Layer 4 (tuning file)** is libcamera-generic, but the calibration values
+  are from this specific unit; treat them as a starting point.
+
 ## TL;DR
 
 - The sensor is a **Sony IMX471** behind the Lenovo-specific ACPI HID **`TBE20A0`**
