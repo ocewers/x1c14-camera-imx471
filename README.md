@@ -5,8 +5,24 @@
 This repo documents how to enable the built-in MIPI camera on the Lenovo ThinkPad
 X1 Carbon Gen 14 (tested: type 21V7, 2.8K OLED SKU, BIOS 1.14) under Arch Linux
 (kernel `linux-ptl` 7.1.3), and — maybe more importantly — which wrong turns you
-can skip. Everything here is a stopgap until the required pieces land upstream;
-each section notes what will make it obsolete.
+can skip.
+
+**⚠️ This is a workaround, not the destination.** Everything here is an interim
+solution until proper support exists end to end; each section notes what will
+make it obsolete. The real fix consists of, in order:
+
+1. **Kernel**: the IMX471 sensor driver series merged mainline and shipped by
+   distro kernels (in flight on linux-media — this repo just builds it early).
+2. **ISP**: a native libcamera pipeline handler for Intel IPU7 that uses the
+   hardware ISP (PSYS) instead of the CPU/GPU software ISP used here — with
+   proper 3A (metering, HDR-ish exposure, face-aware AE) and vendor-grade
+   sensor tuning. Today only Intel's proprietary HAL drives the PSYS, and it
+   has no configuration for this machine.
+3. **Desktop**: applications consuming cameras via PipeWire/libcamera natively,
+   removing the v4l2loopback relay layer entirely.
+
+If you can contribute to any of those, that helps far more than polishing this
+workaround.
 
 ## TL;DR
 
