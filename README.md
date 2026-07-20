@@ -13,11 +13,15 @@ make it obsolete. The real fix consists of, in order:
 
 1. **Kernel**: the IMX471 sensor driver series merged mainline and shipped by
    distro kernels (in flight on linux-media — this repo just builds it early).
-2. **ISP**: a native libcamera pipeline handler for Intel IPU7 that uses the
-   hardware ISP (PSYS) instead of the CPU/GPU software ISP used here — with
-   proper 3A (metering, HDR-ish exposure, face-aware AE) and vendor-grade
-   sensor tuning. Today only Intel's proprietary HAL drives the PSYS, and it
-   has no configuration for this machine.
+2. **ISP**: better image processing. Note that the hardware ISP (PSYS) is a
+   dead end for the open stack: Intel considers its interface and algorithms
+   proprietary and never mainlined PSYS for IPU6 or IPU7 — upstream libcamera's
+   official direction for IPU7 is the simple pipeline + software ISP, i.e.
+   exactly what this setup runs. The realistic path to better quality is the
+   ongoing softISP work (GPU acceleration, FOSS sensor calibration and CCM
+   color correction, lens shading, improved 3A — see the FOSDEM 2026 softISP
+   status talk by Bryan O'Donoghue and Hans de Goede), which will eventually
+   obsolete the hand-made tuning file below.
 3. **Desktop**: applications consuming cameras via PipeWire/libcamera natively,
    removing the v4l2loopback relay layer entirely.
 
