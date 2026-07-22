@@ -211,6 +211,20 @@ tuning/    libcamera soft-ISP tuning file for imx471
 Kernel module sources and patches: GPL-2.0 (see LICENSE), original authorship
 preserved in the mbox patches. Tuning file: CC0. Docs: CC-BY-4.0.
 
+## Related discussions
+
+Ongoing dialogue around this camera, with more detail and history:
+
+- **Omarchy issue** — the main troubleshooting thread, incl. Lenovo's Linux
+  lead (@mrhpearson): https://github.com/basecamp/omarchy/issues/6000
+- **Red Hat bugzilla 2483180** — the IMX471 enablement bug (Kate Hsuan),
+  Fedora backport status: https://bugzilla.redhat.com/show_bug.cgi?id=2483180
+- **Lenovo Linux forum thread** — history of the (initially wrong) firmware
+  theory, now corrected + solved:
+  https://forums.lenovo.com/t5/Other-Linux-Discussions/X1-Carbon-Gen-14-21V7-OLED-MIPI-camera-OV08X40-IPU7-not-working-on-Linux-%E2%80%94-firmware-LCHS/m-p/10033620
+- **Kernel patch series** (linux-media, applied, in linux-next):
+  https://lore.kernel.org/linux-media/20260629074026.35490-1-hpa@redhat.com/
+
 ## Credits
 
 - Kate Hsuan (Red Hat) — imx471 driver + ipu-bridge enablement
