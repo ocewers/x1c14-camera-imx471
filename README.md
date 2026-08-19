@@ -230,6 +230,62 @@ Notes if you want to re-calibrate for your unit:
 - This file is overwritten on every libcamera package upgrade; `scripts/fix-camera.sh`
   restores it (a pacman hook triggers it), until upstream ships a calibrated one.
 
+## Factory calibration (experimental, unfinished)
+
+The tuning file above is a hand-fitted diagonal. Intel ships something much better: binary
+**AIQB** calibration blobs (CPFF format) containing the sensor's black level, AWB gain limits,
+a white-point locus and **full 3x3 CCMs per illuminant**. Two sources:
+
+- Intel's own HAL repo, free to download — `intel/ipu7-camera-hal`,
+  `config/linux/ipu75xa/IMX471_BBG803N3_PTL.aiqb` is the IMX471 reference module for Panther
+  Lake (`ipu7x/` holds the Lunar Lake set, `ipu8/` the next platform).
+- The OEM Windows camera driver, which carries the modules the vendor actually fits — for
+  `TBE20A0` there are three (`AAJH5-D`, `CBG802N3A`, `CJFPE90`). Search the Microsoft Update
+  Catalog for the ACPI HID; unpack with `cabextract` (bsdtar's LZX support chokes on it).
+
+`tools/fetch-factory-tuning.sh` downloads the Intel blob plus Javier Tia's `parse_aiqb.py`
+(in review on libcamera-devel) and prints a ready tuning file. For the reference module it
+yields five CCMs from 2738 K to 5844 K, all white-preserving (rows sum to 1.000).
+
+**What libcamera 0.7.2 can use from it:** the `ccms` list and a scalar `blackLevel`. Nothing
+else — `Awb` has no `init()` in 0.7.2, so `maxGainR`/`maxGainB`/`speed` are ignored (they need
+master's pluggable AWB), and `Adjust` ignores tuning data entirely, so tone stays in
+`configs/ipu7.conf` as `libcamerasrc` properties.
+
+**The unsolved part is module identity.** The three modules' white points differ by about 8%
+(daylight-end R/G: 0.4625 for BBG803N3, 0.4719 for AAJH5-D, 0.5043 for CBG802N3A), which is
+large enough that picking the wrong blob defeats the purpose. On this SKU, guessing is
+especially unwise: the fitted sensor is widely documented as an OV08X40 and is in fact an
+IMX471. `tools/measure-raw.sh` measures the sensor's own raw white point for comparison — it
+captures raw Bayer plus a viewfinder stream (raw alone leaves the AGC without stats, pinning
+exposure at maximum) and `tools/raw-whitepoint.py` reports per-channel means and ratios.
+
+What we have measured so far, and the traps found on the way:
+
+- **Black level is 64 LSB, flat across all four channels** (dark frame with the privacy
+  shutter closed: R=Gr=Gb=B=63.96). That is 4096 in libcamera's 16-bit convention. It must be
+  subtracted before forming ratios, or a ~64 LSB pedestal drags them toward 1.0.
+- **Chromatic lens shading makes the ratio position-dependent** — measured across a 4x4 grid
+  of the same frame, R/G varies about 5%, comparable to the between-module difference. Use one
+  fixed window (we use 380x260 at the frame centre) for every measurement point.
+- **Clipping invalidates the ratios**, and it is easy to miss: a target at 48% mean brightness
+  still had 2% of its green samples saturated because of a lamp hotspot. `raw-whitepoint.py`
+  reports the clipped fraction per channel; require 0.000%.
+- **An adjustable-CCT LED panel cannot identify the module.** Measured against the reference
+  locus, our deviations were +3.0% at nominal 2900 K, +13.4% at 4000 K and +4.3% at 7000 K. A
+  different module would shift the locus roughly uniformly; a hump in the middle is the
+  signature of spectral mismatch — a bi-color LED mixes two phosphors into an SPD no blackbody
+  resembles. Identification needs an illuminant close to what the factory used, i.e. real
+  daylight.
+
+So this section is a work in progress: the identity is not established, and the shipped
+tuning file is still the diagonal. Note also that adopting a factory CCM means accepting
+negative off-diagonal terms, which turn blown-out highlights magenta on this ISP — compare in
+a scene with clipped highlights before switching. Independently reported (@jriff in the Omarchy
+thread): with libcamera master's `bayes` AWB and the full factory locus, indoor results are
+plausible but outdoor is worse than grey-world, because the search converges near 6600 K in
+shade while the factory data stops at 5694 K and everything above it is extrapolated.
+
 ## Known limitations
 
 - **Software ISP**: debayering runs on the GPU (EGL) and the rest on CPU — the
@@ -272,6 +328,7 @@ tungsten (subjectively fine), −4.5% red at 7000K (negligible).
 src/       ready-to-build module sources (kernel 7.1.3 + series + local patch)
 patches/   provenance: upstream v6 series (mbox) + our local delta
 scripts/   install/revert, kernel-update automation (fix-camera.sh + pacman hook)
+tools/     factory-calibration fetch/parse + raw white-point measurement (see above)
 configs/   v4l2-relayd config + systemd drop-ins (incl. camera selection) + WirePlumber override
 tuning/    libcamera soft-ISP tuning file for imx471
 ```
