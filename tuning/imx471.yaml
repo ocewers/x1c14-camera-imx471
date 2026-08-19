@@ -1,16 +1,36 @@
 %YAML 1.1
 # SPDX-License-Identifier: CC0-1.0
-# Sony IMX471 (ThinkPad X1 Carbon Gen 14, TBE20A0) — hand-calibrated 2026-07-20
-# against iPhone 16 Pro reference (wall patch neutralized: linear gains R=1.21 B=1.26).
-# Diagonal-only CCM on purpose: never lowers G => clipped highlights stay white (no magenta).
+# Sony IMX471 (ThinkPad X1 Carbon Gen 14, TBE20A0) — libcamera soft ISP tuning.
+#
+# Diagonal-only CCM. Re-measured on libcamera 0.7.2 (2026-08-19) against a matte white
+# target in mixed office light, reading the mean R/G and B/G of a patch on the target:
+#
+#   no CCM (1.00/1.00):   R/G 0.921   B/G 0.894   -> AWB alone under-corrects; image is green
+#   with 1.21/1.26:       R/G 1.005   B/G 0.995   -> neutral
+#
+# The ratios are measured in the gamma-encoded output, so a linear gain k shows up as
+# k^(1/2.2): 1.21^0.4545 = 1.090, which is exactly why a 1.21 gain moves 0.921 to 1.005.
+# Converting the residual to linear gives the ideal diagonal 1.199 / 1.276.
+#
+# These values are for THIS module. Do not assume they transfer: reports of the same values
+# producing a magenta cast on other 21V7 units are consistent with module spread, not with a
+# libcamera regression. Measure your own — you can A/B tuning files without touching /usr:
+#
+#   LIBCAMERA_SIMPLE_TUNING_FILE=/path/to/candidate.yaml gst-launch-1.0 libcamerasrc ...
+#
+# Want a warmer look? Raise the R gain (e.g. 1.21 -> 1.28), do NOT lower B. Lowering B was
+# measured and tested here: it turns the whole scene olive-green rather than warm, because G
+# then dominates. Keep the matrix diagonal with all gains >= the G gain: negative off-diagonal
+# terms turn blown-out highlights magenta on this ISP (it has no highlight protection).
+#
+# BlackLevel is intentionally an empty node. libcamera only ever reads a single scalar
+# `blackLevel` key (16-bit, shifted >>8); the per-channel r/gr/gb/b keys that circulate in
+# example files have never been read — blc.cpp is identical in 0.7.1 and 0.7.2. An empty node
+# instantiates the algorithm with automatic black-level estimation, which is what you want.
 ---
 version: 1
 algorithms:
   - BlackLevel:
-      r: 16
-      gr: 16
-      gb: 16
-      b: 16
   - Awb:
   - Ccm:
       ccms:

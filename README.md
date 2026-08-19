@@ -1,6 +1,6 @@
 # Built-in camera on ThinkPad X1 Carbon Gen 14 (Panther Lake) on Arch Linux
 
-**Status: working.** 1280x720 @ 30 fps in Teams, Slack and browsers, calibrated colors.
+**Status: working.** 1920x1080 @ 30 fps in Teams, Slack and browsers, calibrated colors.
 
 This repo documents how to enable the built-in MIPI camera on the Lenovo ThinkPad
 X1 Carbon Gen 14 (tested: type 21V7, 2.8K OLED SKU, BIOS 1.14) under Arch Linux
@@ -140,7 +140,19 @@ it from libcamera instead of Intel's HAL (which requires a sensor config that
 does not exist for this machine):
 
 - `configs/ipu7.conf` → `/etc/v4l2-relayd.d/ipu7.conf` (`libcamerasrc`-based
-  pipeline, NV12 1280x720@30, saturation boost via `videobalance`)
+  pipeline, NV12 1920x1080@30, tone and saturation set as `libcamerasrc` properties)
+- `configs/97-libcamera-pipelines.conf` → systemd drop-in; sets
+  `LIBCAMERA_PIPELINES_MATCH_LIST=simple`. **Do not skip this if you ever plug in a
+  USB webcam.** Without it, libcamerasrc takes the first camera libcamera lists, the
+  `uvcvideo` handler is enumerated before the internal `simple` pipeline, and relayd
+  hijacks the webcam — configuring it as YUYV 1920x1080, a mode many webcams only
+  advertise at 5 fps, and republishing those 5 fps as "Hardware ISP Camera" while the
+  internal sensor never streams. The symptom is choppy video already in the app's local
+  preview, before network and encoding. Selecting the sensor with `camera-name` in
+  `ipu7.conf` instead looks simpler but is not: that value must survive three layers of
+  backslash eating (systemd's `EnvironmentFile` unescaping, systemd's own `${VIDEOSRC}`
+  expansion into the `sh -c` script, then `gst_parse_launch`) — measured here, 4
+  backslashes in the file arrive as 1 in the process argv.
 - `configs/99-dmabuf.conf` → systemd drop-in; the stock unit's device sandbox
   blocks `/dev/dma_heap`, which kills libcamera's software ISP
   ("Could not open any dma-buf provider")
@@ -148,7 +160,17 @@ does not exist for this machine):
   Without it, libcamerasrc's timestamps make the sink throttle to ~1-6 fps.
 - keep `intel-ipu7-camera.service` enabled (it starts the relayd chain at boot)
 
+All three drop-ins go into `/etc/systemd/system/v4l2-relayd@ipu7.service.d/`, followed by
+`systemctl daemon-reload && systemctl restart v4l2-relayd@ipu7`.
+
 Apps then see a working camera named "Hardware ISP Camera" (`/dev/video50`).
+
+**Why 1080p and no `videoscale`:** libcamerasrc delivers 1920x1080 directly as a crop of
+the sensor's single 1928x1088 mode, so scaling to 720p is pure added cost. Measured on the
+input chain (GPU debayer, Panther Lake): 1080p without `videoscale` 26.8% of a core, versus
+33.9% for 720p with `videoscale` + `videobalance`. The full relayd chain streaming 1080p30
+measures ~14% of a core. If your CPU load looks far higher than that, check that you are on
+the GPU debayer path — see Known limitations.
 
 ## Layer 4 — colors (tuning file)
 
@@ -158,31 +180,64 @@ green-tinted image. `tuning/imx471.yaml` →
 **diagonal-only** color matrix (hand-calibrated against a reference photo:
 linear gains R=1.21, B=1.26).
 
+Re-measured on libcamera 0.7.2 (2026-08-19) against a matte white target in mixed
+office light, reading mean R/G and B/G on the target: no CCM gives R/G 0.921 / B/G 0.894
+(green — AWB alone under-corrects), the shipped 1.21/1.26 gives 1.005/0.995.
+
 Notes if you want to re-calibrate for your unit:
-- Iterate without touching /usr via `LIBCAMERA_IPA_CONFIG_PATH=<dir>` with the
-  file at `<dir>/simple/imx471.yaml`.
-- The CCM is applied in the **linear** domain: to change an encoded (sRGB) ratio
-  by a factor k, use gain k^2.2.
-- Keep the matrix diagonal-only with all gains >= the G gain. Negative
-  off-diagonal terms turn blown-out highlights magenta with this ISP (no
-  highlight protection).
-- The soft ISP **ignores** all runtime color/exposure controls
-  (`colour-gains`, `awb-enable`, `exposure-value`, framerate hints) — the tuning
-  file is the only lever.
-- This file is overwritten on every libcamera package upgrade; re-copy it until
-  upstream ships a calibrated one.
+- **Do it.** The values above are from this module. Reports of the same values producing a
+  magenta cast on other 21V7 units are consistent with module spread, not a regression.
+- A/B tuning files without touching /usr:
+  `LIBCAMERA_SIMPLE_TUNING_FILE=/path/candidate.yaml gst-launch-1.0 libcamerasrc ...`
+  (or `LIBCAMERA_IPA_CONFIG_PATH=<dir>` with the file at `<dir>/simple/imx471.yaml`).
+- The CCM is applied in the **linear** domain, but you measure the gamma-encoded output: an
+  encoded ratio r means a linear error of r^2.2, so the gain you need is r^-2.2. Check:
+  1.21^(1/2.2) = 1.090, which is exactly how much a 1.21 gain moved 0.921 → 1.005.
+- Keep the matrix diagonal-only with all gains >= the G gain. Negative off-diagonal terms
+  turn blown-out highlights magenta with this ISP (no highlight protection).
+- For a **warmer** look raise the R gain (1.21 → 1.28 is a mild, natural step). Do not lower
+  B to get there: measured here, lowering B turns the whole scene olive-green, because G then
+  dominates. A mathematically neutral image reads colder than what phone and vendor ISPs
+  show, since those bias warm on purpose — so a deliberate warm offset is a legitimate choice.
+- **Tone is not in the tuning file.** libcamera's `Adjust` algorithm registers `Gamma`
+  (0.1–10), `Contrast` (0–2) and `Saturation` (0–2, only when a `Ccm` block is present), so
+  set them as `libcamerasrc` properties — see `configs/ipu7.conf`. Doing it there instead of
+  with a `videobalance` element means the work happens in the linear domain via the CCM, at
+  no extra CPU cost. Note this is not new in 0.7.2: `adjust.cpp` is identical in 0.7.1.
+- **What really is ignored**: `exposure-value`, `brightness` and `sharpness`. The soft
+  AGC/IPA registers no such controls (`agc.cpp` has no control map at all), so tone has to
+  come from gamma/contrast. `colour-gains` and `awb-enable` are likewise not honored.
+- `BlackLevel` should be an **empty node**. libcamera only reads a single scalar `blackLevel`
+  key (16-bit, shifted >>8); the per-channel `r/gr/gb/b` keys seen in example files have
+  never been read (`blc.cpp` is identical in 0.7.1 and 0.7.2). An empty node instantiates
+  automatic black-level estimation. Removing the node entirely has been reported to lift
+  blacks into haze; we could not measure any difference here, so keep it and move on.
+- This file is overwritten on every libcamera package upgrade; `scripts/fix-camera.sh`
+  restores it (a pacman hook triggers it), until upstream ships a calibrated one.
 
 ## Known limitations
 
 - **Software ISP**: debayering runs on the GPU (EGL) and the rest on CPU — the
   IPU7's hardware ISP (PSYS) is not used by the open stack yet. Fine on Panther
-  Lake at 720p30, but not free.
+  Lake at 1080p30, but not free: ~14% of a core for the full relayd chain. Make sure you
+  are actually on the GPU path (look for `INFO eGL egl.cpp` in the log) — measured on the
+  same 1080p30 pipeline, GPU debayer costs 28.5% of a core and the CPU debayer 72.6%, a
+  2.5x difference that matters on battery. libcamera picks GPU when EGL is available;
+  `LIBCAMERA_SOFTISP_MODE=cpu|gpu` overrides it.
 - **2 MP, one mode**: the current imx471 driver implements a single binned
   1928x1088 mode; the sensor is natively 16 MP (4608x3456). More modes must come
   from the driver upstream.
 - **Low light**: image gets dark (colors stay correct); the soft AGC maxes out
   and honors no manual override.
-- The IR camera (`TBE20A1`, Windows Hello) has no Linux driver at all.
+- **Faint colored horizontal lines** appear in the video on this stack (a pink and a blue
+  line, most visible on flat bright areas). Known upstream issue, tracked as Red Hat
+  bugzilla 2502786 — not caused by anything in this repo, so don't go hunting for it.
+- The IR camera (`TBE20A1`, Windows Hello) needs out-of-tree work but is no longer a dead
+  end: it is an ST VD55G1, and @jriff has four small patches that make it stream
+  (ACPI match table for the DT-only vd55g1 driver, an ipu-bridge entry, the int3472 `vana`
+  power-enable mapping, and a missing `V4L2_PIX_FMT_Y10` row in the ipu7-isys format table
+  that makes mono sensors fail at STREAMON). See Related discussions. The IR emitter is not
+  driven yet, so indoor LED-lit scenes come out near-black.
 
 ### Why the tuning file has only ONE color-temperature entry
 
@@ -202,7 +257,7 @@ tungsten (subjectively fine), −4.5% red at 7000K (negligible).
 src/       ready-to-build module sources (kernel 7.1.3 + series + local patch)
 patches/   provenance: upstream v6 series (mbox) + our local delta
 scripts/   install/revert, kernel-update automation (fix-camera.sh + pacman hook)
-configs/   v4l2-relayd config + systemd drop-ins + WirePlumber override
+configs/   v4l2-relayd config + systemd drop-ins (incl. camera selection) + WirePlumber override
 tuning/    libcamera soft-ISP tuning file for imx471
 ```
 
@@ -224,6 +279,15 @@ Ongoing dialogue around this camera, with more detail and history:
   https://forums.lenovo.com/t5/Other-Linux-Discussions/X1-Carbon-Gen-14-21V7-OLED-MIPI-camera-OV08X40-IPU7-not-working-on-Linux-%E2%80%94-firmware-LCHS/m-p/10033620
 - **Kernel patch series** (linux-media, applied, in linux-next):
   https://lore.kernel.org/linux-media/20260629074026.35490-1-hpa@redhat.com/
+- **IR camera (ST VD55G1)** — patches, identification evidence and capture recipe by
+  @jriff: https://github.com/jriff/x1c14-ir-vd55g1 , tracked as Red Hat bugzilla
+  https://bugzilla.redhat.com/show_bug.cgi?id=2509956
+- **`imx471-dkms-git` (AUR)** — packages the same upstream series as DKMS with per-kernel
+  variants, an alternative to building from `src/` here. Note its bundled tuning file is
+  calibrated from a different module and renders pink on 21V7; use `tuning/imx471.yaml`
+  from this repo instead: https://aur.archlinux.org/packages/imx471-dkms-git
+- **Colored horizontal lines** (softISP, upstream):
+  https://bugzilla.redhat.com/show_bug.cgi?id=2502786
 
 ## Credits
 
