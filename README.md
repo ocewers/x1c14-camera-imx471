@@ -152,7 +152,12 @@ does not exist for this machine):
   `ipu7.conf` instead looks simpler but is not: that value must survive three layers of
   backslash eating (systemd's `EnvironmentFile` unescaping, systemd's own `${VIDEOSRC}`
   expansion into the `sh -c` script, then `gst_parse_launch`) — measured here, 4
-  backslashes in the file arrive as 1 in the process argv.
+  backslashes in the file arrive as 1 in the process argv, and 8 is what makes it through — the
+  count is not portable between machines (3 works on another user's), so verify it against the
+  process argv if you pin the name. **Caveat:** the match list is not a permanent answer
+  either. The IR camera (`\_SB_.LNK1`) is also on the `simple` pipeline, so once that sensor is
+  enabled the list no longer narrows the selection to a single camera and `camera-name` is
+  needed as well — belt and braces.
 - `configs/99-dmabuf.conf` → systemd drop-in; the stock unit's device sandbox
   blocks `/dev/dma_heap`, which kills libcamera's software ISP
   ("Could not open any dma-buf provider")
@@ -207,11 +212,21 @@ Notes if you want to re-calibrate for your unit:
 - **What really is ignored**: `exposure-value`, `brightness` and `sharpness`. The soft
   AGC/IPA registers no such controls (`agc.cpp` has no control map at all), so tone has to
   come from gamma/contrast. `colour-gains` and `awb-enable` are likewise not honored.
-- `BlackLevel` should be an **empty node**. libcamera only reads a single scalar `blackLevel`
-  key (16-bit, shifted >>8); the per-channel `r/gr/gb/b` keys seen in example files have
-  never been read (`blc.cpp` is identical in 0.7.1 and 0.7.2). An empty node instantiates
-  automatic black-level estimation. Removing the node entirely has been reported to lift
-  blacks into haze; we could not measure any difference here, so keep it and move on.
+- `BlackLevel` must be present, as an **empty node**. libcamera only reads a single scalar
+  `blackLevel` key (16-bit, shifted >>8); the per-channel `r/gr/gb/b` keys seen in example
+  files have never been read (`blc.cpp` is identical in 0.7.1 and 0.7.2). An empty node
+  instantiates automatic black-level estimation — measured here, that matters a lot:
+
+  | tuning | YMIN | YLOW (10th pct) | YAVG |
+  |---|---|---|---|
+  | no `- BlackLevel:` node | 53 | 69 | 106 |
+  | empty node (auto) | 0 | 28 | 75 |
+  | explicit `blackLevel: 4096` | 1 | 30 | 79 |
+
+  Without the node the algorithm is never instantiated, `DebayerParams::blackLevel` stays at
+  0.0 and nothing is subtracted, so the shadow floor lifts into haze. This applies to the GPU
+  path too — `debayer_egl.cpp` passes the value to the shader as a uniform. An explicit
+  `blackLevel:` skips the auto-estimator, which in bright scenes converges near 16 anyway.
 - This file is overwritten on every libcamera package upgrade; `scripts/fix-camera.sh`
   restores it (a pacman hook triggers it), until upstream ships a calibrated one.
 
