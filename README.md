@@ -4,8 +4,34 @@
 
 This repo documents how to enable the built-in MIPI camera on the Lenovo ThinkPad
 X1 Carbon Gen 14 (tested: type 21V7, 2.8K OLED SKU, BIOS 1.14) under Arch Linux
-(kernel `linux-ptl` 7.1.3), and — maybe more importantly — which wrong turns you
-can skip.
+(originally built on kernel `linux-ptl` 7.1.3; still in use on Omarchy's own
+`linux-omarchy` 7.2.5 as of 2026-09-28), and — maybe more importantly — which
+wrong turns you can skip.
+
+> **Update 2026-09-28 — what changed since the first write-up**
+>
+> - **Kernel 7.3 makes Layer 1 obsolete.** Everything the out-of-tree modules
+>   provide is in mainline for 7.3 (rc5 at the time of writing): the `imx471`
+>   driver, `TBE20A0` in `ipu-bridge`, and the int3472 `vana` power-enable
+>   mapping. One caveat: `CONFIG_VIDEO_IMX471` is a new option that defaults to
+>   off, so it depends on your distro enabling it — check with
+>   `modinfo imx471` on the new kernel. When the kernel ships it,
+>   `scripts/fix-camera.sh` detects the in-tree driver and removes the
+>   out-of-tree copies by itself; when it doesn't, the script keeps building them.
+> - **Layer 3 is still needed after 7.3.** Omarchy's `intel-ipu7-camera` package
+>   ships `/etc/v4l2-relayd.d/ipu7.conf` hard-wired to `icamerasrc
+>   device-name=ov08x40-uf`, and declares **no backup files** — so every upgrade
+>   of that package silently replaces the `libcamerasrc` config from this repo.
+>   Symptom: relayd runs, apps see "Hardware ISP Camera", but no picture ever
+>   arrives. This hit on 2026-09-15 (1.0.5 → 1.0.6). `fix-camera.sh` now
+>   restores the config and the pacman hook triggers on `intel-ipu7-camera`.
+> - **Omarchy now ships its own kernel, `linux-omarchy`**, as the default. The
+>   hook only fires for kernel packages it lists — if you boot a kernel the
+>   hook doesn't name, no modules are built for it and `ov08x40` loads instead
+>   of `imx471`. `linux-omarchy` is listed now; add any other kernel you use.
+> - **Correction: Intel's HAL does have an IMX471 config** (earlier versions of
+>   this README said it didn't), **but it doesn't work as shipped**: the packaged
+>   HAL predates Intel's fix for the IMX471 graph — see Layer 3.
 
 **⚠️ This is a workaround, not the destination.** Everything here is an interim
 solution until proper support exists end to end; each section notes what will
@@ -31,7 +57,8 @@ workaround.
 ## Tested environment — read before applying elsewhere
 
 All of this was built and verified on **one machine running
-[Omarchy](https://omarchy.org)** (Arch-based) with the `linux-ptl` 7.1.3 kernel.
+[Omarchy](https://omarchy.org)** (Arch-based) with the `linux-ptl` 7.1.3 kernel,
+and has since run on stock `linux` 7.1.8/7.2.3 and `linux-omarchy` 7.2.5.
 No guarantees on other distros, including other Arch derivatives. What carries
 over and what does not:
 
@@ -111,9 +138,10 @@ intel-ipu7 0000:00:05.0: Found supported sensor TBE20A0:00
 intel_ipu7_isys ...: bind imx471 0-001a nlanes is 4 port is 0
 ```
 
-**You must rebuild after every kernel update** until the series is merged
-(check: `modinfo imx471` on a new kernel — if it exists, delete the out-of-tree
-copies and this layer is done).
+**You must rebuild after every kernel update** until your kernel is 7.3 or newer,
+where the series is merged (check: `modinfo imx471` on a new kernel — if it
+resolves to a path under `kernel/`, the out-of-tree copies can go and this layer
+is done; `fix-camera.sh` does that for you).
 
 ## Layer 2 — libcamera / PipeWire
 
@@ -136,8 +164,27 @@ After a wireplumber restart, PipeWire-native apps see "Built-in Front Camera".
 
 Most apps do not use PipeWire cameras yet; they enumerate `/dev/video*`. Re-use
 the `v4l2-relayd` + `v4l2loopback` chain that `intel-ipu7-camera` ships, but feed
-it from libcamera instead of Intel's HAL (which requires a sensor config that
-does not exist for this machine):
+it from libcamera instead of Intel's HAL.
+
+About that HAL — a correction: earlier versions of this README said Intel's HAL
+has no config for this sensor. That was wrong. `intel-ipu7-camera` ships one
+(`imx471-uf.json`, `IMX471_BBG803N3_PTL.aiqb`, graph binary
+`IMX471_BBG803N3.IPU75XA.bin`) in both 1.0.5 and 1.0.6, which would mean the
+hardware ISP. Tested 2026-09-28 on 21V7 with 1.0.6 — it does not stream as
+shipped: the IMX471 graph uses graph id 100005, and `pipe_scheduler_profiles.json`
+has no profile for it (`SchedPolicy: setConfig: no config for graphId 100005`).
+With a profile copied from the OV08X40's graph it gets one step further and
+fails binding the PSYS nodes (`getPSysContextId: Can't find node, stream 60001`),
+so a guessed profile is not the way. **Intel has already fixed this upstream:**
+in `intel/ipu7-camera-hal` (commit "Fix graph config", 2026-07-16) the IMX471
+graph binary was regenerated to use graph id 100002, which does have a
+profile. Dropping that newer binary into the packaged HAL fails differently
+(`GraphConfig: failed to init graph reader`), because the libraries in
+`intel-ipu7-camera` 1.0.6 predate Intel's June/July 2026 releases (the packaged
+`libia_*` match none of the `intel/ipu7-camera-bins` commits from April–July).
+So the hardware ISP path needs the package rebuilt from Intel's current
+`ipu7-camera-hal` + `ipu7-camera-bins` — untested here; if someone does that,
+reports are welcome. Until the package ships it, stay on `libcamerasrc`:
 
 - `configs/ipu7.conf` → `/etc/v4l2-relayd.d/ipu7.conf` (`libcamerasrc`-based
   pipeline, NV12 1920x1080@30, tone and saturation set as `libcamerasrc` properties)
@@ -164,6 +211,9 @@ does not exist for this machine):
 - `configs/98-sync.conf` → systemd drop-in; adds `sync=false` to the `v4l2sink`.
   Without it, libcamerasrc's timestamps make the sink throttle to ~1-6 fps.
 - keep `intel-ipu7-camera.service` enabled (it starts the relayd chain at boot)
+- **`ipu7.conf` is overwritten on every `intel-ipu7-camera` upgrade** (the package
+  declares no backup files, so pacman doesn't even leave a `.pacnew`).
+  `scripts/fix-camera.sh` restores it and the hook runs it on that package too.
 
 All three drop-ins go into `/etc/systemd/system/v4l2-relayd@ipu7.service.d/`, followed by
 `systemctl daemon-reload && systemctl restart v4l2-relayd@ipu7`.
@@ -303,6 +353,8 @@ shade while the factory data stops at 5694 K and everything above it is extrapol
 - **Faint colored horizontal lines** appear in the video on this stack (a pink and a blue
   line, most visible on flat bright areas). Known upstream issue, tracked as Red Hat
   bugzilla 2502786 — not caused by anything in this repo, so don't go hunting for it.
+  Root cause is a missing DMA sync in the IPU7 ISYS buffer path; a fix is on
+  linux-media (see Related discussions) and waiting for Tested-by reports.
 - The IR camera (`TBE20A1`, Windows Hello) needs out-of-tree work but is no longer a dead
   end: it is an ST VD55G1, and @jriff has four small patches that make it stream
   (ACPI match table for the DT-only vd55g1 driver, an ipu-bridge entry, the int3472 `vana`
@@ -349,7 +401,7 @@ Ongoing dialogue around this camera, with more detail and history:
 - **Lenovo Linux forum thread** — history of the (initially wrong) firmware
   theory, now corrected + solved:
   https://forums.lenovo.com/t5/Other-Linux-Discussions/X1-Carbon-Gen-14-21V7-OLED-MIPI-camera-OV08X40-IPU7-not-working-on-Linux-%E2%80%94-firmware-LCHS/m-p/10033620
-- **Kernel patch series** (linux-media, applied, in linux-next):
+- **Kernel patch series** (linux-media, merged for 7.3):
   https://lore.kernel.org/linux-media/20260629074026.35490-1-hpa@redhat.com/
 - **IR camera (ST VD55G1)** — patches, identification evidence and capture recipe by
   @jriff: https://github.com/jriff/x1c14-ir-vd55g1 , tracked as Red Hat bugzilla
@@ -358,8 +410,12 @@ Ongoing dialogue around this camera, with more detail and history:
   variants, an alternative to building from `src/` here. Note its bundled tuning file is
   calibrated from a different module and renders pink on 21V7; use `tuning/imx471.yaml`
   from this repo instead: https://aur.archlinux.org/packages/imx471-dkms-git
-- **Colored horizontal lines** (softISP, upstream):
-  https://bugzilla.redhat.com/show_bug.cgi?id=2502786
+- **Colored horizontal lines**: https://bugzilla.redhat.com/show_bug.cgi?id=2502786 ,
+  proposed fix (IPU7 ISYS DMA sync):
+  https://lore.kernel.org/linux-media/20260824224139.21256-1-christian@themurphys.eu/
+- **Omarchy #12347** — same packaging problem on another machine (`intel-ipu7-camera`
+  assumes OV08X40 regardless of the actual sensor):
+  https://github.com/basecamp/omarchy/issues/12347
 
 ## Credits
 

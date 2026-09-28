@@ -1,17 +1,22 @@
 # Install as /etc/pacman.d/hooks/x1c14-camera.hook
 # ADJUST the Exec path below to where you checked out this repository.
-# Re-runs the camera restore automatically when the kernel or libcamera updates.
+# Re-runs the camera restore automatically when a kernel, libcamera or
+# intel-ipu7-camera (which overwrites /etc/v4l2-relayd.d/ipu7.conf) updates.
+# Add a Target line for any other kernel package you boot.
 [Trigger]
 Operation = Install
 Operation = Upgrade
 Type = Package
+Target = linux-omarchy
+Target = linux-omarchy-headers
 Target = linux-ptl
 Target = linux-ptl-headers
 Target = linux
 Target = linux-headers
 Target = libcamera
+Target = intel-ipu7-camera
 
 [Action]
-Description = Restoring X1C14 camera (imx471 modules + tuning file)...
+Description = Restoring X1C14 camera (imx471 modules, tuning file, relayd config)...
 When = PostTransaction
 Exec = /bin/bash /path/to/x1c14-camera-imx471/scripts/fix-camera.sh
