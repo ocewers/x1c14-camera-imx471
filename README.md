@@ -176,9 +176,11 @@ has no profile for it (`SchedPolicy: setConfig: no config for graphId 100005`).
 With a profile copied from the OV08X40's graph it gets one step further and
 fails binding the PSYS nodes (`getPSysContextId: Can't find node, stream 60001`),
 so a guessed profile is not the way. **Intel has already fixed this upstream:**
-in `intel/ipu7-camera-hal` (commit "Fix graph config", 2026-07-16) the IMX471
-graph binary was regenerated to use graph id 100002, which does have a
-profile. Dropping that newer binary into the packaged HAL fails differently
+in `intel/ipu7-camera-hal` the IMX471 graph binary was reworked several times
+between April and June 2026 (`a7ef3771` "Modified correct pipe bin file for
+IMX471", `7b9ef0ab` "... with HAL changes", last in `cdc01d4e` on 2026-06-25);
+the current one uses graph id 100002, which does have a profile. The package
+pins Intel's 2026-02-09 state, which carries the 100005 version. Dropping that newer binary into the packaged HAL fails differently
 (`GraphConfig: failed to init graph reader`), because the libraries in
 `intel-ipu7-camera` 1.0.6 predate Intel's June/July 2026 releases (the packaged
 `libia_*` match none of the `intel/ipu7-camera-bins` commits from April–July).
